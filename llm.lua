@@ -131,7 +131,7 @@ function _M:access(context)
     return
   end
 
-  context.application = application
+  context.application = application.application
 end
 
 function _M:body_filter(context)
