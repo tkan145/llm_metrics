@@ -24,17 +24,18 @@ function _M.get_raw_body()
 
   if type(chunk) == "string" and chunk ~= "" then
     if not buffered then
-      buffered = buffer.new() -- XXX we can use table.new here
+      buffered = {} -- XXX we can use table.new here
       ngx.ctx.buffered_response_body = buffered
     end
 
-    buffered:put(chunk)
+    buffered[#buffered+1] = chunk
+    ngx.arg[1] = nil
   end
 
   -- End of chunk
   if eof then
     if buffered then
-      buffered = buffered:get()
+      buffered = table.concat(buffered)
     else
       buffered = ""
     end
