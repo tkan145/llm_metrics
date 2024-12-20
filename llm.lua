@@ -13,6 +13,7 @@ local Usage = require('apicast.usage')
 local resty_env = require ('resty.env')
 
 local response = require ('response')
+local request = require ('request')
 local portal_client = require('portal_client')
 local custom_metrics = require('custom_metrics')
 
@@ -21,6 +22,9 @@ local default_template_type = "plain"
 local liquid_template_type = "liquid"
 
 local _M = policy.new('LLM metrics', 'builtin')
+
+local ngx_print = ngx.print
+local ngx_flush = ngx.flush
 
 local new = _M.new
 
@@ -110,9 +114,22 @@ function _M.new(config)
   return self
 end
 
+
 -- Need to fetch application here as cosocket is disbaled
 -- in body_filter phase
 function _M:access(context)
+  -- Parse the request body and figure
+  -- out if we need to stream response back
+  local request_table, err = request.get_json_body()
+  if not request_table then
+    ngx.log(ngx.ERR, "failed to get request body, err: ", err)
+  else
+    -- Save the whole thing in context
+    if request_table and request_table.stream then
+      context.response_streaming = true
+    end
+  end
+
   local service = context.service
   if not service then
     ngx.log(ngx.ERR, 'No service in the context')
@@ -134,13 +151,12 @@ function _M:access(context)
   context.application = application.application
 end
 
-function _M:body_filter(context)
+local function handle_response(context)
   local response_body, err = response.get_json_body()
   if err then
     ngx.log(ngx.ERR, "unabled to read response_body, err: " .. err)
     ngx.exit(500)
   end
-
   if response_body then
     -- Read the response body and extract usuage
     local service = context.service
@@ -165,7 +181,7 @@ function _M:body_filter(context)
         service.id or "",
         service.system_name or "",
         application.id or "",
-        application.name or ""
+        application.system_name or ""
       })
     end
 
@@ -174,7 +190,7 @@ function _M:body_filter(context)
         service.id or "",
         service.system_name or "",
         application.id or "",
-        application.name or ""
+        application.system_name or ""
       })
     end
 
@@ -186,6 +202,20 @@ function _M:body_filter(context)
         application.name or ""
       })
     end
+  end
+end
+
+local function handle_streaming_response(context)
+  local chunk, eof = ngx.arg[1], ngx.arg[2]
+  ngx_print(chunk)
+  ngx_flush(true)
+end
+
+function _M:body_filter(context)
+  if context.response_streaming then
+    return handle_streaming_response(context)
+  else
+    return handle_response(context)
   end
 end
 
