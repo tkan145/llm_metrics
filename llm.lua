@@ -62,7 +62,7 @@ local function get_context(context)
   ctx.original_request = context.original_request
   ctx.jwt = context.jwt or {}
   ctx.application = context.application or {}
-  ctx.usuage = context.usage or {}
+  ctx.llm_usage = context.llm_usage or {}
   return LinkedList.readonly(ctx, ngx.var)
 end
 
@@ -116,7 +116,9 @@ end
 -- Need to fetch application here as cosocket is disbaled
 -- in body_filter phase
 function _M:access(context)
-  if not self.path then
+  if self.path then
+    context.application = { id = "", name = "" }
+  else
     local service = context.service
     if not service then
       ngx.log(ngx.ERR, 'No service in the context')
@@ -163,7 +165,7 @@ function _M:body_filter(context)
     local application = context.application
 
     local usuage = response_body.usage
-    context.usuage = usuage
+    context.llm_usage = usuage
 
     if usuage and usuage.prompt_tokens and usuage.prompt_tokens > 0 then
       llm_prompt_tokens_count:inc(usuage.prompt_tokens, {
