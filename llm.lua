@@ -11,6 +11,7 @@ local TemplateString = require('apicast.template_string')
 local Operation = require('apicast.conditions.operation')
 local Usage = require('apicast.usage')
 local resty_env = require ('resty.env')
+local resty_url = require 'resty.url'
 
 local response = require ('response')
 local portal_client = require('portal_client')
@@ -105,6 +106,8 @@ end
 function _M.new(config)
   local self = new(config)
   self.endpoint = resty_env.get('THREESCALE_PORTAL_ENDPOINT')
+  local path = resty_url.split(self.endpoint or '')
+  self.path = path and path[6]
   self.rules = {}
   load_rules(self, config.rules or {})
   return self
@@ -113,25 +116,27 @@ end
 -- Need to fetch application here as cosocket is disbaled
 -- in body_filter phase
 function _M:access(context)
-  local service = context.service
-  if not service then
-    ngx.log(ngx.ERR, 'No service in the context')
-    return
-  end
+  if not self.path then
+    local service = context.service
+    if not service then
+      ngx.log(ngx.ERR, 'No service in the context')
+      return
+    end
 
-  local credentials = context.credentials
-  if not credentials then
-    ngx.log(ngx.WARN, "cannot get credentials: ", err or 'unknown error')
-    return
-  end
+    local credentials = context.credentials
+    if not credentials then
+      ngx.log(ngx.WARN, "cannot get credentials: ", err or 'unknown error')
+      return
+    end
 
-  local application, err = portal_client.find_application(self.endpoint, service.id, credentials)
-  if not application then
-    ngx.log(ngx.WARN, "cannot get application details: ", err or 'unknown error')
-    return
-  end
+    local application, err = portal_client.find_application(self.endpoint, service.id, credentials)
+    if not application then
+      ngx.log(ngx.WARN, "cannot get application details: ", err or 'unknown error')
+      return
+    end
 
-  context.application = application.application
+    context.application = application.application
+  end
 end
 
 function _M:body_filter(context)
