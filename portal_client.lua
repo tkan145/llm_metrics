@@ -40,6 +40,8 @@ function _M.find_application(endpoint, service_id, credentials)
 
   local url = base_url.."?".. build_args(args)
 
+  ngx.log(ngx.DEBUG, 'fetching application details at ', url)
+
   local http_client = http_ng.new{
     backend = http_ng_resty,
     options = {
@@ -60,7 +62,7 @@ function _M.find_application(endpoint, service_id, credentials)
     end
     return val
   else
-    return nil, 'invalid response'
+    return nil, 'invalid response - status: ' .. res.status
   end
 end
 
