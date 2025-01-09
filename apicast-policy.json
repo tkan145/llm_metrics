@@ -118,6 +118,10 @@
       }
     },
     "properties": {
+      "enable_sse_support": {
+        "description": "Whether to enable support for Server-Sent Events(SSE)",
+        "type": "boolean"
+      },
       "rules": {
         "type": "array",
         "items": {

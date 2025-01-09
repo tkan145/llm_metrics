@@ -12,6 +12,7 @@ local Operation = require('apicast.conditions.operation')
 local Usage = require('apicast.usage')
 local resty_env = require ('resty.env')
 local resty_url = require 'resty.url'
+local cjson = require 'cjson.safe'
 
 local response = require ('response')
 local portal_client = require('portal_client')
@@ -109,6 +110,7 @@ function _M.new(config)
   local path = resty_url.split(self.endpoint or '')
   self.path = path and path[6]
   self.rules = {}
+  self.enable_sse_support = config.enable_sse_support
   load_rules(self, config.rules or {})
   return self
 end
@@ -141,34 +143,18 @@ function _M:access(context)
   end
 end
 
-function _M:body_filter(context)
-  local response_body, err = response.get_json_body()
-  if err then
-    ngx.log(ngx.ERR, "unabled to read response_body, err: " .. err)
-    ngx.exit(500)
-  end
-
-  if response_body then
-    -- Read the response body and extract usuage
+local function report_metrics(context)
     local service = context.service
     if not service then
-      ngx.log(ngx.ERR, 'No service in the context')
-      return
-    end
-
-    local credentials = context.credentials
-    if not credentials then
-      ngx.log(ngx.WARN, "cannot get credentials: ", err or 'unknown error')
-      return
+       ngx.log(ngx.ERR, 'No service in the context')
+       return
     end
 
     local application = context.application
+    local usage = context.llm_usage
 
-    local usuage = response_body.usage
-    context.llm_usage = usuage
-
-    if usuage and usuage.prompt_tokens and usuage.prompt_tokens > 0 then
-      llm_prompt_tokens_count:inc(usuage.prompt_tokens, {
+    if usage and usage.prompt_tokens and usage.prompt_tokens > 0 then
+      llm_prompt_tokens_count:inc(usage.prompt_tokens, {
         service.id or "",
         service.system_name or "",
         application.id or "",
@@ -176,8 +162,8 @@ function _M:body_filter(context)
       })
     end
 
-    if usuage and usuage.completion_tokens and usuage.completion_tokens > 0 then
-      llm_completion_tokens_count:inc(usuage.completion_tokens, {
+    if usage and usage.completion_tokens and usage.completion_tokens > 0 then
+      llm_completion_tokens_count:inc(usage.completion_tokens, {
         service.id or "",
         service.system_name or "",
         application.id or "",
@@ -185,13 +171,60 @@ function _M:body_filter(context)
       })
     end
 
-    if usuage and usuage.total_tokens and usuage.total_tokens > 0 then
-      llm_total_token_count:inc(usuage.total_tokens, {
+    if usage and usage.total_tokens and usage.total_tokens > 0 then
+      llm_total_token_count:inc(usage.total_tokens, {
         service.id or "",
         service.system_name or "",
         application.id or "",
         application.name or ""
       })
+    end
+end
+
+function _M:body_filter(context)
+  local content_type = ngx.resp.get_headers()["Content-Type"]
+  local chunk, finished = ngx.arg[1], ngx.arg[2]
+
+  if self.enable_sse_support and response.isSSEStreamingResponse(content_type) then
+    if finished then
+      return report_metrics(context)
+    end
+
+    local events = response.get_sse_events(chunk)
+
+    -- -- no events, continue
+    if not events then
+      return
+    end
+
+    for _, event in ipairs(events) do
+      if event.data ~= response.CONST.SSE_TERMINATOR then
+        local json, err = cjson.decode(event.data)
+        if err then
+          ngx.log(ngx.ERR, "unabled to read response_body, err: " .. err)
+          ngx.exit(500)
+        end
+
+        -- Some model include usage field in each event, we only want to
+        -- take the last one.
+        local usage = json.usage
+        if usage then
+          context.llm_usage = usage
+        end
+      end
+    end
+  else
+    local response_body, err = response.get_json_body(chunk, finished)
+    if err then
+      ngx.log(ngx.ERR, "unabled to read response_body, err: " .. err)
+      ngx.exit(500)
+    end
+    if response_body then
+      local usage = response_body.usage
+      local inspect = require 'inspect'
+
+      context.llm_usage = usage
+      return report_metrics(context)
     end
   end
 end
